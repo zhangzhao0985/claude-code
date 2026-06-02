@@ -57,11 +57,14 @@ const dom = {
   overlay: $("#camOverlay"),
   preview: $("#previewPanel"),
   modeChip: $("#modeChip"),
+  zoomChip: $("#zoomChip"),
   handsChip: $("#handsChip"),
   fpsChip: $("#fpsChip"),
   gestureChips: $("#gestureChips"),
   guide: $("#guide"),
   guideToggle: $("#guideToggle"),
+  btnMode: $("#btnMode"),
+  btnReset: $("#btnReset"),
 };
 const dctx = dom.draw.getContext("2d");
 const fxctx = dom.fx.getContext("2d");
@@ -81,6 +84,21 @@ const cards = [];
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const lerp = (a, b, t) => a + (b - a) * t;
+
+// Scene view transform for two-hand pinch zoom/pan. "world" = scene coords,
+// "screen" = pixels. At scale 1 / offset 0 they are identical, so single-hand
+// behavior is unchanged when not zoomed.
+const view = { scale: 1, x: 0, y: 0 };
+let zoom = null; // active two-hand pinch session, or null
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 4;
+const toWorld = (sx, sy) => ({
+  x: (sx - view.x) / view.scale,
+  y: (sy - view.y) / view.scale,
+});
+function applyView() {
+  dom.scene.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+}
 
 // ---------- pointer (one per hand / mouse) ----------
 class Pointer {
@@ -231,17 +249,19 @@ function deactivate(p) {
 
 // Hit-test against the hand's true position (target), not the lagging cursor.
 function onPinchStart(p) {
+  if (zoom || otherHandPinching(p)) return; // two hands pinching → zoom, not grab/draw
   if (mode === "draw") {
     p.stroke = { x: p.tx, y: p.ty };
     return;
   }
+  const w = toWorld(p.tx, p.ty);
   for (let i = cards.length - 1; i >= 0; i--) {
     const c = cards[i];
-    if (!c.grabbedBy && c.contains(p.tx, p.ty)) {
+    if (!c.grabbedBy && c.contains(w.x, w.y)) {
       c.grabbedBy = p;
       p.grab = c;
-      p.ox = p.tx - c.x;
-      p.oy = p.ty - c.y;
+      p.ox = w.x - c.x;
+      p.oy = w.y - c.y;
       dom.scene.appendChild(c.el); // raise to front
       cards.splice(i, 1);
       cards.push(c);
@@ -251,13 +271,15 @@ function onPinchStart(p) {
 }
 
 function onPinchHold(p) {
+  if (zoom) return; // two-hand zoom owns both hands
   if (mode === "draw") {
     paintSegment(p);
     return;
   }
   if (p.grab) {
-    const nx = p.tx - p.ox;
-    const ny = p.ty - p.oy;
+    const w = toWorld(p.tx, p.ty);
+    const nx = w.x - p.ox;
+    const ny = w.y - p.oy;
     p.grab.vx = nx - p.grab.x; // remember velocity so a release "throws" the card
     p.grab.vy = ny - p.grab.y;
     p.grab.x = nx;
@@ -276,6 +298,41 @@ function onPinchEnd(p) {
   }
 }
 
+function otherHandPinching(p) {
+  return pointers.some((q) => q !== p && q.visible && q.pinch);
+}
+
+function releaseHeld() {
+  for (const p of pointers) {
+    if (p.grab) { p.grab.grabbedBy = null; p.grab = null; }
+    p.stroke = null;
+  }
+}
+
+// Two-hand pinch → zoom & pan the scene around the point between the hands.
+// The world point initially under the hands stays under them, so spreading the
+// hands zooms in toward it and moving both hands together pans the view.
+function updateZoom() {
+  const a = pointers[0];
+  const b = pointers[1];
+  const both = a && b && a.visible && b.visible && a.pinch && b.pinch;
+  if (!both) {
+    zoom = null; // released: keep the current view as-is
+    return;
+  }
+  const mid = { x: (a.tx + b.tx) / 2, y: (a.ty + b.ty) / 2 };
+  const dist = Math.hypot(a.tx - b.tx, a.ty - b.ty) || 1;
+  if (!zoom) {
+    releaseHeld(); // both hands now drive the zoom, not cards/drawing
+    zoom = { startDist: dist, startScale: view.scale, anchor: toWorld(mid.x, mid.y) };
+  }
+  const scale = clamp(zoom.startScale * (dist / zoom.startDist), ZOOM_MIN, ZOOM_MAX);
+  view.scale = scale;
+  view.x = mid.x - zoom.anchor.x * scale;
+  view.y = mid.y - zoom.anchor.y * scale;
+  applyView();
+}
+
 // Debounced single-shot actions for whole-hand poses.
 function triggerGesture(p, name) {
   if (name === p._lastName) p._hold++;
@@ -288,22 +345,19 @@ function triggerGesture(p, name) {
 // ---------- modes & actions ----------
 function toggleMode() {
   mode = mode === "drag" ? "draw" : "drag";
-  // Drop anything held when switching, so a card doesn't stick to the cursor.
-  for (const p of pointers) {
-    if (p.grab) { p.grab.grabbedBy = null; p.grab = null; }
-    p.stroke = null;
-  }
+  releaseHeld(); // drop anything held so a card doesn't stick to the cursor
   dom.modeChip.textContent = mode === "drag" ? "模式：拖拽" : "模式：绘画";
   dom.modeChip.style.color = mode === "draw" ? "var(--lime)" : "";
 }
 
 function resetScene() {
   dctx.clearRect(0, 0, dom.draw.width, dom.draw.height);
-  for (const p of pointers) {
-    if (p.grab) { p.grab.grabbedBy = null; p.grab = null; }
-    p.stroke = null;
-  }
+  releaseHeld();
   cards.forEach((c) => c.goHome());
+  view.scale = 1;
+  view.x = 0;
+  view.y = 0;
+  applyView();
 }
 
 // ---------- drawing ----------
@@ -371,6 +425,8 @@ function drawOverlay(hands) {
 function updateHud(handCount) {
   dom.fpsChip.textContent = `FPS：${Math.round(fps)}`;
   dom.handsChip.textContent = `手：${handCount}`;
+  dom.zoomChip.textContent = `缩放：${Math.round(view.scale * 100)}%`;
+  dom.zoomChip.style.color = zoom ? "var(--lime)" : "";
   const active = pointers.filter((p) => p.visible);
   dom.gestureChips.innerHTML = "";
   active.forEach((p) => {
@@ -415,6 +471,7 @@ function loop() {
     handCount = pointers[0].visible ? 1 : 0;
   }
 
+  updateZoom();
   for (const p of pointers) p.update();
   for (const c of cards) c.update(dt);
   drawFx();
@@ -513,27 +570,60 @@ function begin() {
 // ---------- mouse / touch fallback ----------
 function attachMouse() {
   const p = pointers[0];
-  const move = (e) => {
-    const pt = e.touches ? e.touches[0] : e;
+  let touchZoom = null;
+
+  const setTarget = (pt) => {
     p.visible = true;
     p.setTarget(pt.clientX, pt.clientY);
-    p.x = pt.clientX; // no smoothing lag for a real mouse
+    p.x = pt.clientX; // no smoothing lag for direct input
     p.y = pt.clientY;
-    if (p.pinch) onPinchHold(p);
   };
-  const down = (e) => {
-    move(e);
-    if (!p.pinch) { p.pinch = true; onPinchStart(p); }
+  const twoFinger = (e) => {
+    const a = e.touches[0];
+    const b = e.touches[1];
+    return {
+      mid: { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 },
+      dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1,
+    };
   };
-  const up = () => {
-    if (p.pinch) { p.pinch = false; onPinchEnd(p); }
-  };
-  addEventListener("mousemove", move);
-  addEventListener("mousedown", down);
-  addEventListener("mouseup", up);
-  addEventListener("touchstart", down, { passive: true });
-  addEventListener("touchmove", move, { passive: true });
-  addEventListener("touchend", up);
+
+  // Mouse: hold the button to "pinch".
+  addEventListener("mousemove", (e) => { setTarget(e); if (p.pinch) onPinchHold(p); });
+  addEventListener("mousedown", (e) => { setTarget(e); if (!p.pinch) { p.pinch = true; onPinchStart(p); } });
+  addEventListener("mouseup", () => { if (p.pinch) { p.pinch = false; onPinchEnd(p); } });
+
+  // Touch: 1 finger = pinch/drag/draw, 2 fingers = pinch-to-zoom (like the
+  // two-hand camera gesture). touch-action:none keeps the browser from zooming.
+  addEventListener("touchstart", (e) => {
+    p.gesture = "👆 触摸";
+    if (e.touches.length >= 2) {
+      if (p.pinch) { p.pinch = false; onPinchEnd(p); }
+      const { mid, dist } = twoFinger(e);
+      releaseHeld();
+      touchZoom = { startDist: dist, startScale: view.scale, anchor: toWorld(mid.x, mid.y) };
+    } else {
+      setTarget(e.touches[0]);
+      if (!p.pinch) { p.pinch = true; onPinchStart(p); }
+    }
+  }, { passive: true });
+  addEventListener("touchmove", (e) => {
+    if (touchZoom && e.touches.length >= 2) {
+      const { mid, dist } = twoFinger(e);
+      const scale = clamp(touchZoom.startScale * (dist / touchZoom.startDist), ZOOM_MIN, ZOOM_MAX);
+      view.scale = scale;
+      view.x = mid.x - touchZoom.anchor.x * scale;
+      view.y = mid.y - touchZoom.anchor.y * scale;
+      applyView();
+    } else if (!touchZoom) {
+      setTarget(e.touches[0]);
+      if (p.pinch) onPinchHold(p);
+    }
+  }, { passive: true });
+  addEventListener("touchend", (e) => {
+    if (e.touches.length < 2) touchZoom = null;
+    if (e.touches.length === 0 && p.pinch) { p.pinch = false; onPinchEnd(p); }
+  });
+
   addEventListener("keydown", (e) => {
     if (e.key === "d" || e.key === "D") toggleMode();
     if (e.key === "c" || e.key === "C") resetScene();
@@ -551,6 +641,8 @@ function init() {
   dom.guideToggle.addEventListener("click", () =>
     dom.guide.classList.toggle("collapsed")
   );
+  dom.btnMode.addEventListener("click", toggleMode);
+  dom.btnReset.addEventListener("click", resetScene);
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     dom.btnCamera.disabled = true;
     dom.btnCamera.textContent = "此环境不支持摄像头";

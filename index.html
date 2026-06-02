@@ -38,6 +38,7 @@
       </div>
       <div class="stats">
         <span id="modeChip" class="chip">模式：拖拽</span>
+        <span id="zoomChip" class="chip">缩放：100%</span>
         <span id="handsChip" class="chip">手：0</span>
         <span id="fpsChip" class="chip">FPS：0</span>
       </div>
@@ -45,6 +46,12 @@
 
     <!-- live gesture readout -->
     <div id="gestureChips" class="gesture-chips" aria-hidden="true"></div>
+
+    <!-- on-screen controls (handy on touch / mobile, where ✌️/✊ aren't available) -->
+    <div class="controls" id="controls">
+      <button class="ctrl-btn" id="btnMode">✏️ 绘画 / 拖拽</button>
+      <button class="ctrl-btn" id="btnReset">↺ 重置</button>
+    </div>
 
     <!-- camera preview + skeleton overlay -->
     <aside class="preview hidden" id="previewPanel">
@@ -59,9 +66,11 @@
       <ul class="guide-list">
         <li><b>👉 指</b> — 移动光标</li>
         <li><b>🤏 捏</b> — 抓取 / 拖动卡片</li>
+        <li><b>🤏🤏 双手捏合</b> — 缩放 / 平移场景</li>
         <li><b>🖐 张开</b> — 释放手中的卡片</li>
         <li><b>✌️ 比耶</b> — 切换「绘画 / 拖拽」模式</li>
         <li><b>✊ 握拳</b> — 重置场景并清空画布</li>
+        <li><b>📱 触摸</b> — 单指拖拽，双指缩放</li>
       </ul>
     </section>
 
@@ -81,6 +90,7 @@
         <p class="hint">
           摄像头画面只在你的设备上本地处理，不会上传。<br />
           需通过 http(s) 或 localhost 访问，浏览器才会授权摄像头。<br />
+          手机：单指拖拽、双指缩放，用下方按钮切换绘画 / 重置。<br />
           鼠标模式：按住左键 = 捏，按 <b>D</b> 切换绘画，<b>C</b> 重置。
         </p>
         <div id="loading" class="loading hidden">正在加载手势识别模型</div>

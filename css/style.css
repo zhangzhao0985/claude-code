@@ -51,7 +51,13 @@ html, body {
 #fxCanvas { position: fixed; inset: 0; z-index: 25; pointer-events: none; }
 
 /* ---------- interactive scene & cards ---------- */
-#scene { position: fixed; inset: 0; z-index: 10; }
+#scene {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  transform-origin: 0 0; /* so two-hand zoom math (translate+scale) is exact */
+  will-change: transform;
+}
 
 .card {
   position: absolute;
@@ -183,6 +189,33 @@ html, body {
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
+
+/* ---------- on-screen controls ---------- */
+.controls {
+  position: fixed;
+  z-index: 40;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+}
+.ctrl-btn {
+  padding: 10px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--glass-strong);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: transform 0.1s, border-color 0.2s;
+}
+.ctrl-btn:hover { border-color: var(--cyan); }
+.ctrl-btn:active { transform: scale(0.95); }
 
 /* ---------- camera preview ---------- */
 .preview {
