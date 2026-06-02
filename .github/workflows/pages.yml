@@ -1,0 +1,55 @@
+name: Deploy to GitHub Pages
+
+# Publishes the static site to GitHub Pages on every push to main
+# (e.g. when this PR is merged), and can be run manually.
+#
+# One-time setup in the repo: Settings → Pages → "Build and deployment" →
+# Source: "GitHub Actions". After that, each merge to main auto-deploys to
+# https://<owner>.github.io/<repo>/
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Permissions needed by the Pages deploy (OIDC token + write to Pages).
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; don't cancel an in-progress one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Quality gate: don't publish if the gesture logic is broken.
+      - name: Run unit tests
+        run: node --test
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "."
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
